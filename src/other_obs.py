@@ -50,3 +50,47 @@ def structure_factor(k, Nf, rjl,):
 
    
 
+def renormalized_corr(k, C_r):
+    """
+    Calculate the renormalized correlation function C_ren(k) based on given C(r).
+
+    Args:
+        k (float): The wavevector value.
+        C_r (list or numpy array): The list or array containing the correlation function C(r) values.
+
+    Returns:
+        C_ren_k: The calculated value of the renormalized correlation function C_ren(k).
+    """
+    C_ren_k = 0.0
+    for r in range(len(C_r)):
+        C_ren_k += np.exp(-1j * k * r) * C_r[r]
+    return C_ren_k
+
+def corr_fourier(k, Nf, rij,):
+
+    # k: the wave vector
+    # Nf: number of fermions
+    # Ns: number of sites on the lattice
+    # rij: the distance between site i and site j (you can get the distances by calling graph.positions)
+    
+    n_sites = rij.shape[0]
+    nbar = Nf/n_sites
+    hi = nkx.hilbert.SpinOrbitalFermions(n_sites,n_fermions=(Nf))
+    
+    
+    def nc(site):
+        return nkx.operator.fermion.number(hi, site)
+
+    Ck = 0.0
+    for i in range(rij.shape[0]):
+        # Calculate Manhattan distance for each coordinate
+        manhattan_distances = np.sum(np.abs(rij[i]), axis=-1)
+        # Find unique values and their counts
+        vals, val_counts = np.unique(manhattan_distances, return_counts=True)
+        y = np.array([val_counts[vals.tolist().index(value)] for value in manhattan_distances])
+        for j in range(rij.shape[1]):
+            phase = np.exp(1j * np.dot(k, rij[i,j]))
+            C_rij = (nc(i) - nbar) * (nc(j) - nbar) 
+            Ck += phase * C_rij *(1/y[j])          
+    return 1/(n_sites) *Ck
+

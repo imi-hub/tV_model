@@ -474,7 +474,7 @@ class SymmMeanBackflowSlater(nn.Module):
     """Bool indicating whether to use mean field orbitals or plane waves. Defaults to mean field orbitals --> optimized matrix. """
     jastrow: bool = True
     """Bool indicating whether to use a jastrow term which introduces correlations to our ansatz. """
-    jastrow_rbm: bool = True
+    jastrow_rbm: bool = False
     """Bool indicating whether to use a SymmRBM jastrow term. If False, we use a two-body translation invariant Jastrow term. """
 
 
@@ -595,7 +595,7 @@ class SymmMeanBackflowSlater(nn.Module):
         # calculate (log) determinant of phi
         det = jax.vmap(_log_det)(phi.reshape(phi.shape[0], phi.shape[1],self.Nf, self.Nf))
         
-        # RBM jastrow correlation function
+        # jastrow correlation function
         if self.jastrow == True:
             if self.jastrow_rbm == True:
                 # RBM jastrow consists of a dense symmetric layer
