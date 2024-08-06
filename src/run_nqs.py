@@ -126,7 +126,7 @@ print('double check ham max conn size', ham.max_conn_size)
 #print('get max conn function', get_max_conn(ham, change=True))
 
 n_chains = 288 #(n_tasks)
-n_samples=102
+n_samples=1024
 chunk_size=None
 n_sweeps=hi.size
 learning_rate=0.025
@@ -309,7 +309,7 @@ def acceptance_callback(step_nr,log_data, driver):
 symm = g.translation_group()
 
 character = symm.character_table()-0j
-character = HashableArray(character[6])
+character = HashableArray(character[0])
 print('character', jnp.array(character))
 
 
