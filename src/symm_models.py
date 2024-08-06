@@ -582,7 +582,7 @@ class SymmMeanBackflowSlater(nn.Module):
             phi_ = jax.vmap(_extract_cols, in_axes=(None, 0))(phi_j,jnp.asarray(idx_g))
             phi_ = phi_.transpose(0,2,1,3)
             # multiply mean field orbitals with backflow orbitals
-            phi = phi_ * (1+bf)
+            phi = phi_ * bf
         
             
             
