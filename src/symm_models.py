@@ -162,11 +162,16 @@ class SymmRBM(nn.Module):
 ##### Symmetric dense neural network (g-CNN) #####
 class GroupConvBackflow(nn.Module):
     out_dim: int
-    hidden_layers: Tuple[int]
+    depth: Tuple[int]
     
     Nf: int
     L: int
     symmetries: Union[HashableArray, PermutationGroup]
+
+    kernel_init: NNInitFunc = default_kernel_init#lecun_normal()#default_equivariant_initializer
+    """Initializer for the kernel. Defaults to Lecun normal."""
+    bias_init: NNInitFunc = default_bias_init
+    """Initializer for the bias. Defaults to zero initialization."""
     activation: Callable = nk.nn.reim_relu
     last_bias: bool = True
     # last_linear: bool = True
@@ -178,16 +183,44 @@ class GroupConvBackflow(nn.Module):
 
         self.n_symm, self.n_sites = np.asarray(self.symmetries).shape
         self.features = int(self.alpha * self.n_sites / self.n_symm)
+        layers = []
+        for i in range(self.depth-1):
+            layers.append(nk.nn.DenseEquivariant(symmetries=self.symmetries, mode = "auto",features=self.out_dim, 
+                                   use_bias=True, param_dtype=jnp.complex128,))
+            #layers.append(nn.Conv(features=self.features, kernel_size=(3, 3), strides=(1, 1), padding="CIRCULAR", param_dtype = jnp.complex128))
+        self.layers = layers
+        
 
 
     @nn.compact
     def __call__(self, n):
+        n = jnp.atleast_3d(n)
+        n = n.transpose(0,2,1)
        
-        x = DenseSymmLayer(symmetries=self.symmetries, features=self.features, use_bias=False, param_dtype=jnp.complex128,)(n) 
-         
-        x = nk.nn.reim_relu(x)
+        #x = DenseSymmLayer(symmetries=self.symmetries, features=self.features, use_bias=False, param_dtype=jnp.complex128,)(n) 
+        x = nk.nn.DenseSymm(symmetries=self.symmetries, features=self.features, use_bias=True, 
+                            param_dtype=self.param_dtype,kernel_init=self.kernel_init)(n) 
+        
 
-        return x
+        x = self.activation(x)
+
+
+        if self.depth == 1:
+            x = nk.nn.DenseSymm(symmetries=self.symmetries, features=self.out_dim, use_bias=True, 
+                            param_dtype=self.param_dtype,kernel_init=self.kernel_init)(n) 
+            x = self.activation(x)
+            x = logsumexp_cplx(x, axis=-1)
+            return x
+
+        else:
+            for i, layer in enumerate(self.layers):
+            
+                if i:
+                    x = layer(x)
+                    x = self.activation(x)
+                
+                x = logsumexp_cplx(x)
+                return x
 
 
 
@@ -303,7 +336,7 @@ class ConvBackflow(nn.Module):
     symmetries: Union[HashableArray, PermutationGroup]
     """A group of symmetry operations (or array of permutation indices) over which the layer should be invariant.
         Numpy/Jax arrays must be wrapped into an :class:`netket.utils.HashableArray`. """
-    activation: Callable = nk.nn.reim_relu
+    activation: Callable = nk.nn.log_cosh#nk.nn.reim_relu
     """The nonlinear activation function between layers."""
     depth: int=1
     """The depth of the CNN backflow. """
@@ -480,8 +513,10 @@ class SymmMeanBackflowSlater(nn.Module):
 
     
     backflow: bool = True
-    """Bool indicating whether to use a (CNN) backflow correction function. """
-
+    """Bool indicating whether to use a backflow correction function. """
+    gcnn: bool = False
+    """Bool indicating whether to use a GCNN backflow correction function. If False it uses a CNN backflow. """
+    
     #### backflow params
     depth: int=1
     """The depth of the CNN backflow. """
@@ -541,6 +576,7 @@ class SymmMeanBackflowSlater(nn.Module):
 
         # Normalization of input: rescale the input to a signed binary notation of occupation number basis
         # centering the data around zero has shown to improve the NN performance
+        print('n', n)
         n = (2*n-1)
                 
         if self.mf_orbitals == True:
@@ -557,33 +593,32 @@ class SymmMeanBackflowSlater(nn.Module):
         # CNN backflow
         if self.backflow == True:
             # construct CNN backflow, we want bf to be of dimension number of orbitals (in our case = number of fermions) N_orbitals * number of sites N_sites
-            #CNNBackflow vs CNNBackflow
             ################################################################################################################################
             # create a list that contains N_orbitals times the CNN backflow model (function)
             #bf_mu = [DenseSymmBackflow(out_dim=self.Ns,  symmetries=self.symmetries, activation=self.activation, param_dtype=self.param_dtype,
             #kernel_init=self.kernel_init, bias_init=self.bias_init) for i in range(self.Nf)]
             
+            if self.gcnn == 1:
+                b = nn.vmap(GroupConvBackflow,in_axes=None, axis_size=self.Nf,    variable_axes={'params': 0},split_rngs={'params': True})
+                bf_out = b(out_dim = self.Ns, depth=1, Nf = self.Nf, L = self.L, symmetries= self.symmetries)(n)
+                bf_out = bf_out.transpose(1,0,2)
+                bf = jax.vmap(jax.vmap(_extract_cols, in_axes=(None, 0)), in_axes=(0,0))(bf_out,jnp.asarray(idx_g))
 
-            b = nn.vmap(ConvBackflow,in_axes=None, axis_size=self.Nf,    variable_axes={'params': 0},split_rngs={'params': True})
-            
-            bf_out = b(L=self.L, Ns = self.Ns, Nf=self.Nf, symmetries=self.symmetries, activation=self.activation, depth=self.depth,
-            features=self.features, dtype=self.dtype, param_dtype=self.param_dtype, kernel_size=self.kernel_size, use_bias=self.use_bias,
-            kernel_init=self.kernel_init, bias_init=self.bias_init)(n)
-            bf_out = bf_out.transpose(1,2,0,3)
-
-            #################################################################################################################################
-
-            # for each sample n take for each row in phi_j the Nf active indices (idx)
-            bf = jax.vmap(jax.vmap(_extract_cols, in_axes=(0, 0)), in_axes=(0,0))(bf_out,jnp.asarray(idx_g))
-
-            #print('phi extracted', phi)
+            else:
+                b = nn.vmap(ConvBackflow,in_axes=None, axis_size=self.Nf,    variable_axes={'params': 0},split_rngs={'params': True})
+                
+                bf_out = b(L=self.L, Ns = self.Ns, Nf=self.Nf, symmetries=self.symmetries, activation=self.activation, depth=self.depth,
+                features=self.features, dtype=self.dtype, param_dtype=self.param_dtype, kernel_size=self.kernel_size, use_bias=self.use_bias,
+                kernel_init=self.kernel_init, bias_init=self.bias_init)(n)
+                bf_out = bf_out.transpose(1,2,0,3)
+                # for each sample n take for each row in phi_j the Nf active indices (idx)
+                bf = jax.vmap(jax.vmap(_extract_cols, in_axes=(0, 0)), in_axes=(0,0))(bf_out,jnp.asarray(idx_g))
 
             # for each sample n take for each row in phi_j the Nf active indices (idx)
             phi_ = jax.vmap(_extract_cols, in_axes=(None, 0))(phi_j,jnp.asarray(idx_g))
             phi_ = phi_.transpose(0,2,1,3)
             # multiply mean field orbitals with backflow orbitals
             phi = phi_ * bf
-        
             
             
         else:

@@ -38,12 +38,14 @@ class MeanBackflowSlater(nn.Module):
     """The numerical precision of the computation see :class:`jax.lax.Precision` for details."""
 
     ### MLP backflow params
+    depth: int=1
+    """The number of the hidden layers."""
     hidden_dims: Optional[Union[int, Tuple[int, ...]]] = None
     """The size of the hidden layers, excluding the output layer."""
     hidden_dims_alpha: Optional[Union[int, Tuple[int, ...]]] = None
     """The size of the hidden layers provided as number of times the input size.
     One must choose to either specify this or the hidden_dims keyword argument"""
-    hidden_activations: Optional[Union[Callable, Tuple[Callable, ...]]] = nk.nn.reim_relu
+    hidden_activations: Optional[Union[Callable, Tuple[Callable, ...]]] = nk.nn.log_cosh#nk.nn.reim_relu
     """The nonlinear activation function after each hidden layer.
     Can be provided as a single activation,
     where the same activation will be used for every layer."""
@@ -59,7 +61,7 @@ class MeanBackflowSlater(nn.Module):
     bias_init: NNInitFunc = default_bias_init
     """Initializer for the biases."""
 
-    activation: Callable = nk.nn.reim_relu
+    activation: Callable = nk.nn.log_cosh#nk.nn.reim_relu
     """The nonlinear activation function between layers."""
     
     #### RBM params
@@ -89,6 +91,16 @@ class MeanBackflowSlater(nn.Module):
         # MLP architecture - dim = = [# input nodes, # first hidden layer nodes,...., # output nodes]
         #self.hidden_layers = (self.alpha * self.Ns,)  # Ns is the total number of sites (= # inpute nodes)
         #self.out_dim = (self.Nf * self.Ns)
+    
+    def setup(self):
+        layers = []
+        for i in range(self.depth):
+            layers.append(nn.Dense(features=self.hidden_dims_alpha*self.Ns,
+            param_dtype=self.param_dtype,precision=self.precision,use_bias=self.use_output_bias,
+            kernel_init=self.kernel_init,
+            bias_init=self.bias_init,))
+            self.layers = layers
+
 
     @nn.compact
     def __call__(self, n):
@@ -110,21 +122,29 @@ class MeanBackflowSlater(nn.Module):
             
         if self.backflow == True:
 
-            #bf = nk.models.MLP(output_dim=self.Nf*self.Ns,hidden_dims=2, param_dtype=self.param_dtype,
+            #bf = nk.models.MLP(output_dim=self.Nf*self.Ns,hidden_dims=self.hidden_dims, param_dtype=self.param_dtype,
             #precision= self.precision, hidden_activations=self.activation)(n)
-        
             #bf = jnp.expand_dims(bf, 0)
             #bf = bf.reshape(n.shape[0], self.Nf, self.Ns)
-            bf = nn.Dense(2, param_dtype=self.param_dtype)(n)
-            bf = jax.nn.tanh(bf)
+            
+            #bf = nn.Dense(2, param_dtype=self.param_dtype)(n)
+            #bf = jax.nn.tanh(bf)
             # last layer, outputs N x Nf values
-            bf = nn.Dense(self.Nf*self.Ns, param_dtype=self.param_dtype)(bf)
+            #bf = nn.Dense(self.Nf*self.Ns, param_dtype=self.param_dtype)(bf)
+
+            for i, layer in enumerate(self.layers):
+                x = layer(n)
+                x = self.activation(x)
+            
+            # output layer
+            bf = nn.Dense(features=self.Nf*self.Ns,
+            param_dtype=self.param_dtype,precision=self.precision,use_bias=self.use_output_bias,
+            kernel_init=self.kernel_init,
+            bias_init=self.bias_init,)(x)        
+            
             # reshape into M and add
             bf = jnp.expand_dims(bf, 0)
             bf = bf.reshape(n.shape[0], self.Nf, self.Ns)
-
-
-
 
             phi_bf = phi_j * bf
             phi = jax.vmap(_extract_cols, in_axes=(0, 0))(phi_bf,

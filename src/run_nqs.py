@@ -53,19 +53,23 @@ parser.add_argument("--symm", type=int, help="Symmetries", default=True)
 
 #if parser.parse_known_args()[0].J:
     #parser.add_argument("--J_rbm", type=int, help="Jastrow_RBM", default=True)
-
+charac = 0
 # Add optional arguments for symm=True case
-#if parser.parse_known_args()[0].symm:
-    #parser.add_argument("--charac", type=int, help="Character", required=True)
+if parser.parse_known_args()[0].symm:
+    parser.add_argument("--charac", type=int, help="Character", required=True)
+    
 
 parser.add_argument("--bf", type=int, help="NN Backflow")
 
 if parser.parse_known_args()[0].bf:
+    if parser.parse_known_args()[0].symm:
+        parser.add_argument("--gcnn", type=int, help="Features", required=True)
     parser.add_argument("--depth", type=int, help="Depth", required=True)
     parser.add_argument("--feat", type=int, help="Features", required=True)
+    
 else:
-    parser.add_argument("--depth", type=int, help="Depth", default=1)
-    parser.add_argument("--feat", type=int, help="Features",default=1 )
+    parser.add_argument("--depth", type=int, help="Depth", default=0)
+    parser.add_argument("--feat", type=int, help="Features",default=0)
 
 # Parse the arguments
 args = parser.parse_args()
@@ -74,7 +78,7 @@ args = parser.parse_args()
 print("L:", args.L)
 print("Nf:", args.Nf)
 print("V:", args.V)
-#print("symmetrize:", bool(args.symm))
+print("symmetrize:", bool(args.symm))
 
 print("Jastrow:", bool(args.j))
 
@@ -82,10 +86,13 @@ print("Jastrow:", bool(args.j))
 
 #if args.J:
     #print("Jastrow RBM:", bool(args.J_rbm))
-#if args.symm:
-    #print("character:", args.charac)
+if args.symm:
+    print("character:", args.charac)
+    charac = args.charac
 if args.bf:
     print("backflow:", bool(args.bf))
+    if args.symm:
+        print('gcnn bf:', bool(args.gcnn))
     print("depth:", args.depth)
     print("features:", args.feat)
 
@@ -126,13 +133,13 @@ print('double check ham max conn size', ham.max_conn_size)
 #print('get max conn function', get_max_conn(ham, change=True))
 
 n_chains = 288 #(n_tasks)
-n_samples=1024
+n_samples=4096
 chunk_size=None
 n_sweeps=hi.size
-learning_rate=0.025
+learning_rate=0.009
 diag_shift=0.01
 n_samples_v = 4196*2
-iterations = 1500
+iterations = 9500
 
 
 print('n_chains', n_chains)
@@ -149,19 +156,20 @@ print('n_samples_v', n_samples_v)
 def run_ansatz(i):
 
     # choose sampler
-    sa = nk.sampler.MetropolisExchange(hi, graph=g, n_chains=n_chains,n_sweeps=n_sweeps)
+    sa = nk.sampler.MetropolisExchange(hi, graph=g, n_chains=n_chains,sweep_size=n_sweeps)
 
 
     # define the model
     if args.symm == 0:
         #print('no sym')
         #---- without lattice symmetries ----
-        ma = MeanBackflowSlater(L=args.L, D=D, Nf=args.Nf, Ns=Ns, mf_orbitals=True, backflow=args.bf, jastrow=args.j)
+        ma = MeanBackflowSlater(L=args.L, D=D, Nf=args.Nf, Ns=Ns, mf_orbitals=True, backflow=args.bf, depth=args.depth, 
+        hidden_dims_alpha=args.feat, jastrow=args.j)
 
     elif args.symm:
     #---- with lattice symmetries ----
         ma = SymmMeanBackflowSlater(L=args.L,D=D, Nf=args.Nf, Ns=Ns, symmetries = symm, character=character, graph=g,
-                                backflow=args.bf, mf_orbitals=True, jastrow=args.j, depth=args.depth, features = args.feat)
+                                backflow=args.bf, gcnn = args.gcnn, mf_orbitals=True, jastrow=args.j, depth=args.depth, features = args.feat)
 
     # variational state
     vs = nk.vqs.MCState(sa, ma, n_samples=n_samples,chunk_size=chunk_size, n_discard_per_chain=2)#chunk_size=8)#n_discard_per_chain=100
@@ -185,13 +193,13 @@ def run_ansatz(i):
     # VMC driver
     gs = nk.driver.VMC(ham, opt, variational_state=vs, preconditioner=sr)
     # run the optimization
-    out_name = f"output/out_{i}"
+    out_name = f"output/out_{i}_nosymm_{args.depth}"
     gs.run(n_iter=iterations, out=out_name, callback=acceptance_callback, )#obs={'Structure Factor': s})
 
 
 
     # save variational state prams --> flax serialization
-    with open(f"output/out_{i}_params.mpack", 'wb') as file:
+    with open(f"output/out_{i}_nosymm_{args.depth}_params.mpack", 'wb') as file:
         file.write(flax.serialization.to_bytes(vs.parameters))
 
 
@@ -224,7 +232,7 @@ def mean_en_var(ham, vs):
 
 
 
-    ####### k values (1D) ######
+    '''####### k values (1D) ######
     k =  2 * np.pi / (L + 1) * np.arange(0, L + 1) # same as numpy fft
     #k = np.array([-np.pi, -np.pi/2, 0, np.pi/2, np.pi])
     #print('k', k)
@@ -271,7 +279,7 @@ def mean_en_var(ham, vs):
         s =  vs.expect(s)
         S_k.append(s.mean)
     print('structure factor', np.array(S_k))
-    print('sf_renorm', np.array(S_k)-C_r[0])
+    print('sf_renorm', np.array(S_k)-C_r[0])'''
 
     return energy_mean, standard, variance
 
@@ -309,7 +317,7 @@ def acceptance_callback(step_nr,log_data, driver):
 symm = g.translation_group()
 
 character = symm.character_table()-0j
-character = HashableArray(character[0])
+character = HashableArray(character[charac])
 print('character', jnp.array(character))
 
 
