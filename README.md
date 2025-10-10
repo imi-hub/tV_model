@@ -1,4 +1,4 @@
-# tV_model — Symmetry-aware neural backflow for the 2D t–V model
+# Symmetry-aware neural backflow for the 2D t–V model
 
 This repository contains research code for **symmetry-aware neural backflow** variational wavefunctions applied to the **two-dimensional t–V model** of interacting spinless fermions.  
 The implementation builds on **NetKet 3** (JAX) for variational Monte Carlo (VMC) and uses **QuSpin** for exact diagonalization (ED) benchmarks.
