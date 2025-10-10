@@ -7,9 +7,9 @@
 #SBATCH --array=1-1
 #SBATCH --job-name=SMF
 
-#SBATCH --nodes=16
-#SBATCH --ntasks=256
-#SBATCH --cpus-per-task=2
+#SBATCH --nodes=32
+#SBATCH --ntasks=512
+#SBATCH --cpus-per-task=4
 ##SBATCH --mem-per-cpu=8192
 
 ##SBATCH --mem=350000
@@ -36,7 +36,7 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 SAMPLE_LIST=($(<grid.txt))
 V=${SAMPLE_LIST[${SLURM_ARRAY_TASK_ID}]}
 echo "V input: ${V} for ARRAY_TASK_ID ${SLURM_ARRAY_TASK_ID}"
-cmd="srun python run_nqs.py --L 8 --Nf 28 --V ${V} --j 1 --symm 0 --bf 1 --depth 2 --feat 1"
+cmd="srun python run_nqs.py --L 8 --Nf 28 --V ${V} --j 1 --symm 1 --charac 27 --bf 1 --gcnn 1 --depth 2 --feat 8"
 #1 --depth 1 --feat 16 "
 
 echo "COMMAND: $cmd"

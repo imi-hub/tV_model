@@ -95,7 +95,7 @@ class MeanBackflowSlater(nn.Module):
     def setup(self):
         layers = []
         for i in range(self.depth):
-            layers.append(nn.Dense(features=self.hidden_dims_alpha*self.Ns,
+            layers.append(nn.Dense(features=self.hidden_dims,
             param_dtype=self.param_dtype,precision=self.precision,use_bias=self.use_output_bias,
             kernel_init=self.kernel_init,
             bias_init=self.bias_init,))

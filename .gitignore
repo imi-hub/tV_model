@@ -1,0 +1,6 @@
+__pycache__/
+*.log
+*.mpack
+tV_data/
+plots/
+src/output/

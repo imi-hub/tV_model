@@ -89,10 +89,13 @@ print("Jastrow:", bool(args.j))
 if args.symm:
     print("character:", args.charac)
     charac = args.charac
+gcnn = 0
 if args.bf:
-    print("backflow:", bool(args.bf))
+    print("backflow:", bool(args.bf))    
     if args.symm:
-        print('gcnn bf:', bool(args.gcnn))
+        gcnn = args.gcnn
+        print('gcnn bf:', bool(gcnn))
+        
     print("depth:", args.depth)
     print("features:", args.feat)
 
@@ -136,7 +139,7 @@ n_chains = 288 #(n_tasks)
 n_samples=4096
 chunk_size=None
 n_sweeps=hi.size
-learning_rate=0.009
+learning_rate=0.0059
 diag_shift=0.01
 n_samples_v = 4196*2
 iterations = 9500
@@ -164,12 +167,12 @@ def run_ansatz(i):
         #print('no sym')
         #---- without lattice symmetries ----
         ma = MeanBackflowSlater(L=args.L, D=D, Nf=args.Nf, Ns=Ns, mf_orbitals=True, backflow=args.bf, depth=args.depth, 
-        hidden_dims_alpha=args.feat, jastrow=args.j)
+        hidden_dims=args.feat, jastrow=args.j)
 
     elif args.symm:
     #---- with lattice symmetries ----
         ma = SymmMeanBackflowSlater(L=args.L,D=D, Nf=args.Nf, Ns=Ns, symmetries = symm, character=character, graph=g,
-                                backflow=args.bf, gcnn = args.gcnn, mf_orbitals=True, jastrow=args.j, depth=args.depth, features = args.feat)
+                                backflow=args.bf, gcnn = gcnn, mf_orbitals=True, jastrow=args.j, depth=args.depth, features = args.feat)
 
     # variational state
     vs = nk.vqs.MCState(sa, ma, n_samples=n_samples,chunk_size=chunk_size, n_discard_per_chain=2)#chunk_size=8)#n_discard_per_chain=100
@@ -193,13 +196,13 @@ def run_ansatz(i):
     # VMC driver
     gs = nk.driver.VMC(ham, opt, variational_state=vs, preconditioner=sr)
     # run the optimization
-    out_name = f"output/out_{i}_nosymm_{args.depth}"
+    out_name = f"output/out_{i}_gcnn_{args.depth}"
     gs.run(n_iter=iterations, out=out_name, callback=acceptance_callback, )#obs={'Structure Factor': s})
 
 
 
     # save variational state prams --> flax serialization
-    with open(f"output/out_{i}_nosymm_{args.depth}_params.mpack", 'wb') as file:
+    with open(f"output/out_{i}_gcnn_{args.depth}_params.mpack", 'wb') as file:
         file.write(flax.serialization.to_bytes(vs.parameters))
 
 

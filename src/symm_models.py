@@ -168,24 +168,25 @@ class GroupConvBackflow(nn.Module):
     L: int
     symmetries: Union[HashableArray, PermutationGroup]
 
-    kernel_init: NNInitFunc = default_kernel_init#lecun_normal()#default_equivariant_initializer
+    kernel_init: NNInitFunc = nn.initializers.normal(0.01)#default_equivariant_initializer#
     """Initializer for the kernel. Defaults to Lecun normal."""
     bias_init: NNInitFunc = default_bias_init
     """Initializer for the bias. Defaults to zero initialization."""
-    activation: Callable = nk.nn.reim_relu
+    activation: Callable = nk.nn.log_cosh#nk.nn.reim_relu
     last_bias: bool = True
     # last_linear: bool = True
     param_dtype: Any = complex
-    alpha: int = 1
+    alpha: int = 4
     
         
     def setup(self):
 
         self.n_symm, self.n_sites = np.asarray(self.symmetries).shape
         self.features = int(self.alpha * self.n_sites / self.n_symm)
+        
         layers = []
-        for i in range(self.depth-1):
-            layers.append(nk.nn.DenseEquivariant(symmetries=self.symmetries, mode = "auto",features=self.out_dim, 
+        for i in range(self.depth):
+            layers.append(nk.nn.DenseEquivariant(symmetries=self.symmetries, mode = "auto",features=self.features, 
                                    use_bias=True, param_dtype=jnp.complex128,))
             #layers.append(nn.Conv(features=self.features, kernel_size=(3, 3), strides=(1, 1), padding="CIRCULAR", param_dtype = jnp.complex128))
         self.layers = layers
@@ -198,29 +199,29 @@ class GroupConvBackflow(nn.Module):
         n = n.transpose(0,2,1)
        
         #x = DenseSymmLayer(symmetries=self.symmetries, features=self.features, use_bias=False, param_dtype=jnp.complex128,)(n) 
-        x = nk.nn.DenseSymm(symmetries=self.symmetries, features=self.features, use_bias=True, 
-                            param_dtype=self.param_dtype,kernel_init=self.kernel_init)(n) 
         
-
-        x = self.activation(x)
 
 
         if self.depth == 1:
-            x = nk.nn.DenseSymm(symmetries=self.symmetries, features=self.out_dim, use_bias=True, 
+            #features=self.out_dim
+            x = nk.nn.DenseSymm(symmetries=self.symmetries, features=self.features, use_bias=True, 
                             param_dtype=self.param_dtype,kernel_init=self.kernel_init)(n) 
             x = self.activation(x)
             x = logsumexp_cplx(x, axis=-1)
             return x
 
         else:
-            for i, layer in enumerate(self.layers):
+            x = nk.nn.DenseSymm(symmetries=self.symmetries, features=self.features, use_bias=True, 
+                            param_dtype=self.param_dtype,kernel_init=self.kernel_init)(n) 
             
-                if i:
-                    x = layer(x)
-                    x = self.activation(x)
-                
-                x = logsumexp_cplx(x)
-                return x
+            for i, layer in enumerate(self.layers):
+                x = self.activation(x)
+                x = layer(x)
+                #x = self.activation(x)
+            #x = nk.nn.DenseEquivariant(symmetries=self.symmetries, mode = "auto",features=self.out_dim, 
+                                   #use_bias=True, param_dtype=jnp.complex128,)(x)    
+            x = logsumexp_cplx(x, axis=-1)
+            return x
 
 
 
@@ -576,7 +577,6 @@ class SymmMeanBackflowSlater(nn.Module):
 
         # Normalization of input: rescale the input to a signed binary notation of occupation number basis
         # centering the data around zero has shown to improve the NN performance
-        print('n', n)
         n = (2*n-1)
                 
         if self.mf_orbitals == True:
@@ -600,7 +600,8 @@ class SymmMeanBackflowSlater(nn.Module):
             
             if self.gcnn == 1:
                 b = nn.vmap(GroupConvBackflow,in_axes=None, axis_size=self.Nf,    variable_axes={'params': 0},split_rngs={'params': True})
-                bf_out = b(out_dim = self.Ns, depth=1, Nf = self.Nf, L = self.L, symmetries= self.symmetries)(n)
+                #for gcnn: features = int(self.alpha * self.n_sites / self.n_symm)
+                bf_out = b(out_dim = self.Ns, depth=self.depth, Nf = self.Nf, L = self.L, symmetries= self.symmetries)(n)
                 bf_out = bf_out.transpose(1,0,2)
                 bf = jax.vmap(jax.vmap(_extract_cols, in_axes=(None, 0)), in_axes=(0,0))(bf_out,jnp.asarray(idx_g))
 
@@ -610,7 +611,11 @@ class SymmMeanBackflowSlater(nn.Module):
                 bf_out = b(L=self.L, Ns = self.Ns, Nf=self.Nf, symmetries=self.symmetries, activation=self.activation, depth=self.depth,
                 features=self.features, dtype=self.dtype, param_dtype=self.param_dtype, kernel_size=self.kernel_size, use_bias=self.use_bias,
                 kernel_init=self.kernel_init, bias_init=self.bias_init)(n)
+                
                 bf_out = bf_out.transpose(1,2,0,3)
+                #print('n', (n+1)/2)
+                #print('b', bf_out, )
+                #print('sum', jnp.sum(bf_out, axis=1))
                 # for each sample n take for each row in phi_j the Nf active indices (idx)
                 bf = jax.vmap(jax.vmap(_extract_cols, in_axes=(0, 0)), in_axes=(0,0))(bf_out,jnp.asarray(idx_g))
 
@@ -618,7 +623,7 @@ class SymmMeanBackflowSlater(nn.Module):
             phi_ = jax.vmap(_extract_cols, in_axes=(None, 0))(phi_j,jnp.asarray(idx_g))
             phi_ = phi_.transpose(0,2,1,3)
             # multiply mean field orbitals with backflow orbitals
-            phi = phi_ * bf
+            phi = phi_ * (1+bf)
             
             
         else:
@@ -633,6 +638,7 @@ class SymmMeanBackflowSlater(nn.Module):
         # jastrow correlation function
         if self.jastrow == True:
             if self.jastrow_rbm == True:
+                print('Jastrow RBM', self.jastrow_rbm)
                 # RBM jastrow consists of a dense symmetric layer
                 x = SymmRBM(symmetries=self.symmetries, alpha=self.alpha, use_bias=self.use_bias_rbm, param_dtype=self.param_dtype,
                 kernel_init = self.kernel_init_rbm, bias_init = self.bias_init_rbm, activation=self.activation_rbm)(n) 
